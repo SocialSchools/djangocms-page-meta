@@ -2,22 +2,26 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 from cms.api import get_page_draft
-from cms.cms_toolbars import PAGE_MENU_SECOND_BREAK
 from cms.toolbar.items import Break
 from cms.toolbar_base import CMSToolbar
 from cms.toolbar_pool import toolbar_pool
+from cms.utils import get_cms_setting
 from cms.utils.i18n import get_language_list, get_language_object
-from cms.utils.permissions import has_page_permission
 from django.core.urlresolvers import NoReverseMatch, reverse
 from django.utils.translation import ugettext_lazy as _
 
 from .models import PageMeta, TitleMeta
 
 try:
-    from cms.utils import get_cms_setting
-except ImportError:  # pragma: no cover
-    from cms.utils.conf import get_cms_setting
+    from cms.utils.permissions import has_page_permission
+    has_page_change_permission = None
+except ImportError:
+    from cms.utils.permissions import has_page_change_permission
 
+try:
+    from cms.cms_toolbars import PAGE_MENU_SECOND_BREAK
+except ImportError:
+    from cms.cms_toolbar import PAGE_MENU_SECOND_BREAK
 
 PAGE_META_MENU_TITLE = _('Meta-information')
 PAGE_META_ITEM_TITLE = _('Common')
@@ -35,16 +39,23 @@ class PageToolbarMeta(CMSToolbar):
 
         # check global permissions if CMS_PERMISSIONS is active
         if get_cms_setting('PERMISSION'):
-            has_global_current_page_change_permission = has_page_permission(
-                self.request.user, self.request.current_page, 'change'
-            )
+            if not has_page_change_permission:
+                has_global_current_page_change_permission = has_page_permission(
+                    self.request.user, self.request.current_page, 'change'
+                )
+            else:
+                has_global_current_page_change_permission = has_page_change_permission(
+                    self.request
+                )
         else:
             has_global_current_page_change_permission = False
             # check if user has page edit permission
-        can_change = (
-            self.request.current_page and
-            self.request.current_page.has_change_permission(self.request.user)
-        )
+        if not has_page_change_permission:
+            can_change = (self.request.current_page and
+                          self.request.current_page.has_change_permission(self.request.user))
+        else:
+            can_change = (self.request.current_page and
+                          self.request.current_page.has_change_permission(self.request))
         if has_global_current_page_change_permission or can_change:
             not_edit_mode = not self.toolbar.edit_mode
             current_page_menu = self.toolbar.get_or_create_menu('page')
@@ -73,12 +84,8 @@ class PageToolbarMeta(CMSToolbar):
                 meta_menu.add_modal_item(PAGE_META_ITEM_TITLE, url=url, disabled=not_edit_mode,
                                          position=position)
             # Title tags
-            try:
-                site_id = self.page.node.site_id
-            except AttributeError:  # CMS_3_4
-                site_id = self.page.site_id
             for title in self.page.title_set.filter(
-                language__in=get_language_list(site_id)
+                language__in=get_language_list(self.page.site_id)
             ):
                 try:
                     title_extension = TitleMeta.objects.get(extended_object_id=title.pk)
